@@ -1,16 +1,9 @@
 # calculator_bintang
 
-A new Flutter project.
+Dalam project ini saya membuat aplikasi calculator sederhana menggunakan Flutter
 
-## Getting Started
+## Screenshot
 
-This project is a starting point for a Flutter application.
+![WhatsApp Image 2023-05-28 at 15 34 13](https://github.com/BintangNadiMaulana/bintang_calculator/assets/48204257/c11cd5d6-5588-4604-9e51-8e8afff94c36)
 
-A few resources to get you started if this is your first Flutter project:
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
