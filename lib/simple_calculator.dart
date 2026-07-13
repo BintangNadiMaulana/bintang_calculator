@@ -9,185 +9,283 @@ class SimpleCalculator extends StatefulWidget {
 }
 
 class _SimpleCalculatorState extends State<SimpleCalculator> {
-
   String equation = "0";
   String result = "0";
-  String expression = "";
-  double equationFontSize = 38.0;
-  double resultFontSize = 48.0;
+  bool _calculated = false;
 
-  buttonPressed(String buttonText){
+  static const Color _bgColor = Color(0xFF1C1C1E);
+  static const Color _displayBg = Color(0xFF1C1C1E);
+  static const Color _numberColor = Color(0xFF2C2C2E);
+  static const Color _operatorColor = Color(0xFF0A84FF);
+  static const Color _accentColor = Color(0xFFFF453A);
+  static const Color _textColor = Colors.white;
+  static const Color _secondaryText = Color(0xFFA1A1A6);
+
+  static const Set<String> _operators = {'+', '-', '×', '÷', '%'};
+
+  bool _isOperator(String s) => _operators.contains(s);
+
+  bool _endsWithOperator() {
+    if (equation.isEmpty) return false;
+    return _isOperator(equation[equation.length - 1]);
+  }
+
+  String _formatResult(String raw) {
+    double? val = double.tryParse(raw);
+    if (val == null) return raw;
+    if (val == val.toInt().toDouble() && !raw.contains('e')) {
+      return val.toInt().toString();
+    }
+    String formatted = val.toStringAsFixed(10);
+    formatted = formatted.replaceAll(RegExp(r'0+$'), '');
+    if (formatted.endsWith('.')) {
+      formatted = formatted.substring(0, formatted.length - 1);
+    }
+    return formatted;
+  }
+
+  void buttonPressed(String buttonText) {
     setState(() {
-      if(buttonText == "C"){
-        equation = "0";
-        result = "0";
-        equationFontSize = 38.0;
-        resultFontSize = 48.0;
-      }else if (buttonText == "⌫"){
-        equationFontSize = 48.0;
-        resultFontSize = 38.0;
-        equation = equation.substring(0, equation.length - 1);
-        if(equation == ""){
+      switch (buttonText) {
+        case "AC":
           equation = "0";
-        }
-      }else if(buttonText == "="){
-        equationFontSize = 38.0;
-        resultFontSize = 48.0;
+          result = "0";
+          _calculated = false;
+          break;
 
-        expression = equation;
-        expression = expression.replaceAll('×', '*');
-        expression = expression.replaceAll('÷', '/');
-        try{
-          Parser p = Parser();
-          Expression exp = p.parse(expression);
-
-          ContextModel cm = ContextModel();
-          result = '${exp.evaluate(EvaluationType.REAL, cm)}';
-        }catch(e){
-          result = "Error";
-        }
-      }else{
-        equationFontSize = 48.0;
-        resultFontSize = 38.0;
-          if(equation == "0"){
-            equation = buttonText;
-          }else {
-            equation = equation + buttonText;
+        case "⌫":
+          if (_calculated) {
+            equation = "0";
+            result = "0";
+            _calculated = false;
+          } else if (equation.length > 1) {
+            equation = equation.substring(0, equation.length - 1);
+          } else {
+            equation = "0";
           }
+          break;
+
+        case "=":
+          _calculate();
+          break;
+
+        case "%":
+          if (equation != "0" && !_endsWithOperator()) {
+            equation = equation + "%";
+          }
+          break;
+
+        default:
+          _handleInput(buttonText);
       }
     });
   }
 
-  Widget buildButton(String buttonText, double buttonHeight, Color buttonColor){
-    return Container(
-      height: MediaQuery.of(context).size.height *0.1 * buttonHeight,
-      color: buttonColor,
-      child: TextButton(
-        style: ButtonStyle(
-            shape: MaterialStateProperty.all<RoundedRectangleBorder>(
-                RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(0),
-                    side: BorderSide(color: Colors.white, width: 1, style: BorderStyle.solid)
-                )
-            )
-        ),
-        onPressed: () => buttonPressed(buttonText),
-        child: Text(
-          buttonText,
-          style: TextStyle(
-              fontSize: 30,
-              fontWeight: FontWeight.normal,
-              color: Colors.white
+  void _handleInput(String buttonText) {
+    if (_isOperator(buttonText)) {
+      _calculated = false;
+      if (equation == "0" && buttonText != '-') return;
+      if (_endsWithOperator()) {
+        equation = equation.substring(0, equation.length - 1) + buttonText;
+      } else {
+        equation = equation + buttonText;
+      }
+    } else if (buttonText == ".") {
+      _calculated = false;
+      String lastNumber = _getLastNumber();
+      if (!lastNumber.contains('.')) {
+        if (_endsWithOperator() || equation == "0") {
+          if (equation == "0") {
+            equation = "0.";
+          } else {
+            equation = equation + "0.";
+          }
+        } else {
+          equation = equation + ".";
+        }
+      }
+    } else {
+      if (_calculated) {
+        equation = buttonText;
+        result = "0";
+        _calculated = false;
+      } else if (equation == "0") {
+        equation = buttonText;
+      } else {
+        equation = equation + buttonText;
+      }
+    }
+  }
+
+  String _getLastNumber() {
+    String last = "";
+    for (int i = equation.length - 1; i >= 0; i--) {
+      if (_isOperator(equation[i])) break;
+      last = equation[i] + last;
+    }
+    return last;
+  }
+
+  void _calculate() {
+    String expression = equation;
+    expression = expression.replaceAll('×', '*');
+    expression = expression.replaceAll('÷', '/');
+    expression = expression.replaceAll('%', '/100');
+
+    try {
+      Parser p = Parser();
+      Expression exp = p.parse(expression);
+      ContextModel cm = ContextModel();
+      double eval = exp.evaluate(EvaluationType.REAL, cm);
+
+      if (eval.isInfinite) {
+        result = "Tidak terdefinisi";
+      } else if (eval.isNaN) {
+        result = "Error";
+      } else {
+        result = _formatResult('$eval');
+      }
+    } catch (e) {
+      result = "Error";
+    }
+    _calculated = true;
+  }
+
+  Widget _buildButton(String text, {Color? color, Color? textColor, int flex = 1}) {
+    return Expanded(
+      flex: flex,
+      child: Padding(
+        padding: const EdgeInsets.all(4.0),
+        child: Material(
+          color: color ?? _numberColor,
+          borderRadius: BorderRadius.circular(16),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () => buttonPressed(text),
+            child: Container(
+              height: 70,
+              alignment: Alignment.center,
+              child: Text(
+                text,
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w500,
+                  color: textColor ?? _textColor,
+                ),
+              ),
+            ),
           ),
         ),
       ),
     );
   }
 
+  Widget _buildButtonRow(List<Map<String, dynamic>> buttons) {
+    return Row(
+      children: buttons.map((b) {
+        return _buildButton(
+          b['text'] as String,
+          color: b['color'] as Color?,
+          textColor: b['textColor'] as Color?,
+          flex: (b['flex'] as int?) ?? 1,
+        );
+      }).toList(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text("Bintang Calculator"), centerTitle: true),
-      body: Column(
-        children: [
-
-          Container(
-            alignment: Alignment.centerRight,
-            padding: EdgeInsets.fromLTRB(10, 20, 10, 0),
-            child: Text(equation, style: TextStyle(fontSize: equationFontSize)),
-          ),
-
-          Container(
-            alignment: Alignment.centerRight,
-            padding: EdgeInsets.fromLTRB(10, 20, 10, 0),
-            child: Text(result, style: TextStyle(fontSize: resultFontSize)),
-          ),
-
-          Expanded(child: Divider ()),
-
-          Row(
-            // mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: MediaQuery.of(context).size.width *.75,
-                child: Table(
+      backgroundColor: _bgColor,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Display area
+            Expanded(
+              child: Container(
+                color: _displayBg,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                alignment: Alignment.bottomRight,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    TableRow(
-                      children: [
-                        buildButton("C", 1, Colors.redAccent),
-                        buildButton("⌫", 1, Colors.blue),
-                        buildButton("÷", 1, Colors.blue),
-                      ]
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      reverse: true,
+                      child: Text(
+                        equation,
+                        style: TextStyle(
+                          fontSize: _calculated ? 32 : 48,
+                          fontWeight: FontWeight.w300,
+                          color: _calculated ? _secondaryText : _textColor,
+                        ),
+                      ),
                     ),
-
-                    TableRow(
-                        children: [
-                          buildButton("7", 1, Colors.black54),
-                          buildButton("8", 1, Colors.black54),
-                          buildButton("9", 1, Colors.black54),
-                        ]
-                    ),
-
-                    TableRow(
-                        children: [
-                          buildButton("4", 1, Colors.black54),
-                          buildButton("5", 1, Colors.black54),
-                          buildButton("6", 1, Colors.black54),
-                        ]
-                    ),
-
-                    TableRow(
-                        children: [
-                          buildButton("1", 1, Colors.black54),
-                          buildButton("2", 1, Colors.black54),
-                          buildButton("3", 1, Colors.black54),
-                        ]
-                    ),
-
-                    TableRow(
-                        children: [
-                          buildButton(".", 1, Colors.black54),
-                          buildButton("0", 1, Colors.black54),
-                          buildButton("00", 1, Colors.black54),
-                        ]
+                    const SizedBox(height: 12),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      reverse: true,
+                      child: Text(
+                        result,
+                        style: TextStyle(
+                          fontSize: _calculated ? 56 : 36,
+                          fontWeight: _calculated ? FontWeight.w400 : FontWeight.w300,
+                          color: _calculated ? _textColor : _secondaryText,
+                        ),
+                      ),
                     ),
                   ],
                 ),
               ),
+            ),
 
-              Container(
-                width: MediaQuery.of(context).size.width *0.25,
-                child: Table(
-                  children: [
-                    TableRow(
-                      children: [
-                        buildButton("×", 1, Colors.blue),
-                      ]
-                    ),
+            // Divider
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Divider(color: Colors.white.withValues(alpha: 0.1), height: 1),
+            ),
 
-                    TableRow(
-                      children: [
-                        buildButton("-", 1, Colors.blue),
-                      ]
-                    ),
-
-                    TableRow(
-                      children: [
-                        buildButton("+", 1, Colors.blue),
-                      ]
-                    ),
-
-                    TableRow(
-                      children: [
-                        buildButton("=", 2, Colors.redAccent),
-                      ]
-                    ),
-                  ],
-                ),
-              )
-            ],
-          )
-        ],
+            // Button grid
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 16),
+              child: Column(
+                children: [
+                  _buildButtonRow([
+                    {'text': 'AC', 'color': _accentColor},
+                    {'text': '⌫', 'color': const Color(0xFF3A3A3C)},
+                    {'text': '%', 'color': const Color(0xFF3A3A3C)},
+                    {'text': '÷', 'color': _operatorColor},
+                  ]),
+                  _buildButtonRow([
+                    {'text': '7'},
+                    {'text': '8'},
+                    {'text': '9'},
+                    {'text': '×', 'color': _operatorColor},
+                  ]),
+                  _buildButtonRow([
+                    {'text': '4'},
+                    {'text': '5'},
+                    {'text': '6'},
+                    {'text': '-', 'color': _operatorColor},
+                  ]),
+                  _buildButtonRow([
+                    {'text': '1'},
+                    {'text': '2'},
+                    {'text': '3'},
+                    {'text': '+', 'color': _operatorColor},
+                  ]),
+                  _buildButtonRow([
+                    {'text': '00'},
+                    {'text': '0'},
+                    {'text': '.'},
+                    {'text': '=', 'color': _accentColor},
+                  ]),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
