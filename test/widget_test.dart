@@ -41,28 +41,22 @@ void main() {
       expect(_eq(t), '123');
     });
 
-    testWidgets('00 on initial state stays 0', (t) async {
-      await t.pumpWidget(const MyApp());
-      await _tap(t, '00');
-      expect(_eq(t), '0');
-    });
-
-    testWidgets('00 after operator becomes single 0', (t) async {
-      await t.pumpWidget(const MyApp());
-      await _tapAll(t, ['5', '+', '00']);
-      expect(_eq(t), '5+0');
-    });
-
     testWidgets('digit replaces leading zero after operator', (t) async {
       await t.pumpWidget(const MyApp());
       await _tapAll(t, ['5', '+', '0', '3']);
-      expect(_eq(t), '5+3');
+      expect(_eq(t), '5 + 3');
     });
 
     testWidgets('zero stays single after operator', (t) async {
       await t.pumpWidget(const MyApp());
       await _tapAll(t, ['5', '+', '0', '0']);
-      expect(_eq(t), '5+0');
+      expect(_eq(t), '5 + 0');
+    });
+
+    testWidgets('digit blocked after close paren', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['()', '5', '()', '3']);
+      expect(_eq(t), '(5)');
     });
   });
 
@@ -136,25 +130,32 @@ void main() {
     testWidgets('consecutive operators replaced', (t) async {
       await t.pumpWidget(const MyApp());
       await _tapAll(t, ['5', '+', '-']);
-      expect(_eq(t), '5-');
+      expect(_eq(t), '5 - ');
     });
 
     testWidgets('= ignored when ending with operator', (t) async {
       await t.pumpWidget(const MyApp());
       await _tapAll(t, ['5', '+', '=']);
-      expect(_eq(t), '5+');
+      expect(_eq(t), '5 + ');
     });
 
     testWidgets('operator after = chains from result', (t) async {
       await t.pumpWidget(const MyApp());
       await _tapAll(t, ['5', '+', '3', '=', '+']);
-      expect(_eq(t), '8+');
+      expect(_eq(t), '8 + ');
     });
 
     testWidgets('chained calculation across equals', (t) async {
       await t.pumpWidget(const MyApp());
       await _tapAll(t, ['5', '+', '3', '=', '+', '2', '=']);
       expect(_res(t), '10');
+    });
+
+    testWidgets('multiple = does not re-evaluate', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '3', '=', '=']);
+      expect(_res(t), '8');
+      expect(_eq(t), '5 + 3');
     });
   });
 
@@ -182,19 +183,25 @@ void main() {
     testWidgets('allowed in second number', (t) async {
       await t.pumpWidget(const MyApp());
       await _tapAll(t, ['5', '.', '3', '+', '1', '.', '2']);
-      expect(_eq(t), '5.3+1.2');
+      expect(_eq(t), '5.3 + 1.2');
     });
 
     testWidgets('after operator adds 0.', (t) async {
       await t.pumpWidget(const MyApp());
       await _tapAll(t, ['5', '+', '.']);
-      expect(_eq(t), '5+0.');
+      expect(_eq(t), '5 + 0.');
     });
 
     testWidgets('after = starts 0.', (t) async {
       await t.pumpWidget(const MyApp());
       await _tapAll(t, ['5', '+', '3', '=', '.']);
       expect(_eq(t), '0.');
+    });
+
+    testWidgets('blocked after close paren', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['()', '5', '()', '.']);
+      expect(_eq(t), '(5)');
     });
   });
 
@@ -208,7 +215,7 @@ void main() {
     testWidgets('not replaced by next operator', (t) async {
       await t.pumpWidget(const MyApp());
       await _tapAll(t, ['5', '0', '%', '×', '2']);
-      expect(_eq(t), '50%×2');
+      expect(_eq(t), '50% × 2');
     });
 
     testWidgets('cannot add twice', (t) async {
@@ -220,7 +227,92 @@ void main() {
     testWidgets('not allowed after operator', (t) async {
       await t.pumpWidget(const MyApp());
       await _tapAll(t, ['5', '+', '%']);
-      expect(_eq(t), '5+');
+      expect(_eq(t), '5 + ');
+    });
+  });
+
+  group('Parentheses', () {
+    testWidgets('() on initial state opens paren', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tap(t, '()');
+      expect(_eq(t), '(');
+    });
+
+    testWidgets('basic parenthesized expression', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['()', '5', '+', '3', '()', '×', '2', '=']);
+      expect(_res(t), '16');
+    });
+
+    testWidgets('auto-closes unclosed parens on =', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['()', '5', '+', '3', '×', '2', '=']);
+      expect(_res(t), '11');
+    });
+
+    testWidgets('implicit multiply before open paren', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '()', '3', '+', '2', '()', '=']);
+      expect(_eq(t), '5 × (3 + 2)');
+      expect(_res(t), '25');
+    });
+
+    testWidgets('nested parentheses', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['()', '()', '2', '+', '3', '()', '()', '×', '4', '=']);
+      expect(_res(t), '20');
+    });
+  });
+
+  group('Sign toggle ±', () {
+    testWidgets('negates simple number', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '±']);
+      expect(_eq(t), '-5');
+    });
+
+    testWidgets('double toggle returns to positive', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '±', '±']);
+      expect(_eq(t), '5');
+    });
+
+    testWidgets('does nothing on 0', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tap(t, '±');
+      expect(_eq(t), '0');
+    });
+
+    testWidgets('negates result after =', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '3', '=', '±']);
+      expect(_eq(t), '-8');
+    });
+
+    testWidgets('does nothing in compound expression', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '3', '±']);
+      expect(_eq(t), '5 + 3');
+    });
+  });
+
+  group('Display formatting', () {
+    testWidgets('operators have spaces', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '3', '×', '2']);
+      expect(_eq(t), '5 + 3 × 2');
+    });
+
+    testWidgets('unary minus has no space', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '±']);
+      expect(_eq(t), '-5');
+    });
+
+    testWidgets('thousands separator on result', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['9', '9', '9', '×', '9', '9', '9', '=']);
+      expect(_res(t), '998,001');
     });
   });
 
@@ -241,6 +333,34 @@ void main() {
       await t.pumpWidget(const MyApp());
       await _tapAll(t, ['5', '+']);
       expect(_res(t), '0');
+    });
+
+    testWidgets('preview auto-closes parens', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['()', '5', '+', '3']);
+      expect(_res(t), '8');
+    });
+  });
+
+  group('History', () {
+    testWidgets('history icon exists', (t) async {
+      await t.pumpWidget(const MyApp());
+      expect(find.byIcon(Icons.history), findsOneWidget);
+    });
+
+    testWidgets('empty history shows snackbar', (t) async {
+      await t.pumpWidget(const MyApp());
+      await t.tap(find.byIcon(Icons.history));
+      await t.pump();
+      expect(find.text('Belum ada riwayat'), findsOneWidget);
+    });
+
+    testWidgets('calculation adds to history', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '3', '=']);
+      await t.tap(find.byIcon(Icons.history));
+      await t.pumpAndSettle();
+      expect(find.text('Riwayat'), findsOneWidget);
     });
   });
 }
