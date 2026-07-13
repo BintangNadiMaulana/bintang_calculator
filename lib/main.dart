@@ -1,4 +1,4 @@
-import 'package:calculator_bintang/simple_calculator.dart';
+import 'package:calculator_bintang/screens/simple_calculator.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
