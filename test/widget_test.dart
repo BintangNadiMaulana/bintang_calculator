@@ -1,168 +1,246 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
 import 'package:calculator_bintang/main.dart';
 
-final _equationFinder = find.byKey(const Key('equation'));
-final _resultFinder = find.byKey(const Key('result'));
+final _eqFinder = find.byKey(const Key('equation'));
+final _resFinder = find.byKey(const Key('result'));
 
-String _equationText(WidgetTester tester) {
-  return (tester.widget<Text>(_equationFinder)).data!;
+String _eq(WidgetTester t) => (t.widget<Text>(_eqFinder)).data!;
+String _res(WidgetTester t) => (t.widget<Text>(_resFinder)).data!;
+
+Future<void> _tap(WidgetTester t, String label) async {
+  await t.tap(find.text(label));
+  await t.pump(const Duration(milliseconds: 250));
 }
 
-String _resultText(WidgetTester tester) {
-  return (tester.widget<Text>(_resultFinder)).data!;
-}
-
-Future<void> _tap(WidgetTester tester, String label) async {
-  await tester.tap(find.text(label));
-  await tester.pump();
-}
-
-Future<void> _tapAll(WidgetTester tester, List<String> labels) async {
-  for (final label in labels) {
-    await _tap(tester, label);
+Future<void> _tapAll(WidgetTester t, List<String> labels) async {
+  for (final l in labels) {
+    await _tap(t, l);
   }
 }
 
 void main() {
-  testWidgets('Initial state shows 0 for equation and result', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    expect(_equationText(tester), '0');
-    expect(_resultText(tester), '0');
+  group('Initial state', () {
+    testWidgets('shows 0 for equation and result', (t) async {
+      await t.pumpWidget(const MyApp());
+      expect(_eq(t), '0');
+      expect(_res(t), '0');
+    });
   });
 
-  testWidgets('Number buttons update equation', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tap(tester, '5');
-    expect(_equationText(tester), '5');
+  group('Number input', () {
+    testWidgets('single digit replaces initial 0', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tap(t, '5');
+      expect(_eq(t), '5');
+    });
+
+    testWidgets('multi-digit input', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['1', '2', '3']);
+      expect(_eq(t), '123');
+    });
+
+    testWidgets('00 on initial state stays 0', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tap(t, '00');
+      expect(_eq(t), '0');
+    });
+
+    testWidgets('00 after operator becomes single 0', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '00']);
+      expect(_eq(t), '5+0');
+    });
+
+    testWidgets('digit replaces leading zero after operator', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '0', '3']);
+      expect(_eq(t), '5+3');
+    });
+
+    testWidgets('zero stays single after operator', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '0', '0']);
+      expect(_eq(t), '5+0');
+    });
   });
 
-  testWidgets('Multi-digit input', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['1', '2', '3']);
-    expect(_equationText(tester), '123');
+  group('Basic operations', () {
+    testWidgets('addition', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '3', '=']);
+      expect(_res(t), '8');
+    });
+
+    testWidgets('subtraction', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['9', '-', '4', '=']);
+      expect(_res(t), '5');
+    });
+
+    testWidgets('multiplication', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['6', '×', '7', '=']);
+      expect(_res(t), '42');
+    });
+
+    testWidgets('division', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['8', '÷', '2', '=']);
+      expect(_res(t), '4');
+    });
+
+    testWidgets('division by zero', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '÷', '0', '=']);
+      expect(_res(t), 'Tidak terdefinisi');
+    });
+
+    testWidgets('decimal result removes trailing zeros', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['1', '0', '÷', '4', '=']);
+      expect(_res(t), '2.5');
+    });
   });
 
-  testWidgets('AC button clears everything', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['5', '+', '3', 'AC']);
-    expect(_equationText(tester), '0');
-    expect(_resultText(tester), '0');
+  group('AC and backspace', () {
+    testWidgets('AC clears everything', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '3', 'AC']);
+      expect(_eq(t), '0');
+      expect(_res(t), '0');
+    });
+
+    testWidgets('backspace removes last char', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['1', '2', '⌫']);
+      expect(_eq(t), '1');
+    });
+
+    testWidgets('backspace on single digit resets to 0', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '⌫']);
+      expect(_eq(t), '0');
+    });
+
+    testWidgets('backspace after calculation resets all', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '3', '=', '⌫']);
+      expect(_eq(t), '0');
+      expect(_res(t), '0');
+    });
   });
 
-  testWidgets('Basic addition', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['5', '+', '3', '=']);
-    expect(_resultText(tester), '8');
+  group('Operator handling', () {
+    testWidgets('consecutive operators replaced', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '-']);
+      expect(_eq(t), '5-');
+    });
+
+    testWidgets('= ignored when ending with operator', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '=']);
+      expect(_eq(t), '5+');
+    });
+
+    testWidgets('operator after = chains from result', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '3', '=', '+']);
+      expect(_eq(t), '8+');
+    });
+
+    testWidgets('chained calculation across equals', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '3', '=', '+', '2', '=']);
+      expect(_res(t), '10');
+    });
   });
 
-  testWidgets('Basic subtraction', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['9', '-', '4', '=']);
-    expect(_resultText(tester), '5');
+  group('Post-calculation input', () {
+    testWidgets('number after = starts fresh', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '3', '=', '9']);
+      expect(_eq(t), '9');
+    });
+
+    testWidgets('operator after error resets', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '÷', '0', '=', '+']);
+      expect(_eq(t), '0');
+    });
   });
 
-  testWidgets('Basic multiplication', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['6', '×', '7', '=']);
-    expect(_resultText(tester), '42');
+  group('Decimal point', () {
+    testWidgets('only once per number', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '.', '3', '.']);
+      expect(_eq(t), '5.3');
+    });
+
+    testWidgets('allowed in second number', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '.', '3', '+', '1', '.', '2']);
+      expect(_eq(t), '5.3+1.2');
+    });
+
+    testWidgets('after operator adds 0.', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '.']);
+      expect(_eq(t), '5+0.');
+    });
+
+    testWidgets('after = starts 0.', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '3', '=', '.']);
+      expect(_eq(t), '0.');
+    });
   });
 
-  testWidgets('Basic division', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['8', '÷', '2', '=']);
-    expect(_resultText(tester), '4');
+  group('Percent', () {
+    testWidgets('adds percent sign', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '0', '%']);
+      expect(_eq(t), '50%');
+    });
+
+    testWidgets('not replaced by next operator', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '0', '%', '×', '2']);
+      expect(_eq(t), '50%×2');
+    });
+
+    testWidgets('cannot add twice', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '%', '%']);
+      expect(_eq(t), '5%');
+    });
+
+    testWidgets('not allowed after operator', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '%']);
+      expect(_eq(t), '5+');
+    });
   });
 
-  testWidgets('Division by zero shows error', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['5', '÷', '0', '=']);
-    expect(_resultText(tester), 'Tidak terdefinisi');
-  });
+  group('Live preview', () {
+    testWidgets('shows preview while typing expression', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '3']);
+      expect(_res(t), '8');
+    });
 
-  testWidgets('Backspace removes last character', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['1', '2', '⌫']);
-    expect(_equationText(tester), '1');
-  });
+    testWidgets('no preview for single number', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tap(t, '5');
+      expect(_res(t), '0');
+    });
 
-  testWidgets('Backspace on single digit resets to 0', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['5', '⌫']);
-    expect(_equationText(tester), '0');
-  });
-
-  testWidgets('Backspace after calculation resets all', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['5', '+', '3', '=', '⌫']);
-    expect(_equationText(tester), '0');
-    expect(_resultText(tester), '0');
-  });
-
-  testWidgets('Consecutive operators replaced', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['5', '+', '-']);
-    expect(_equationText(tester), '5-');
-  });
-
-  testWidgets('New number after calculation resets equation', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['5', '+', '3', '=', '9']);
-    expect(_equationText(tester), '9');
-  });
-
-  testWidgets('Operator after calculation chains from result', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['5', '+', '3', '=', '+']);
-    expect(_equationText(tester), '8+');
-  });
-
-  testWidgets('Decimal point only once per number', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['5', '.', '3', '.']);
-    expect(_equationText(tester), '5.3');
-  });
-
-  testWidgets('Decimal allowed in second number', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['5', '.', '3', '+', '1', '.', '2']);
-    expect(_equationText(tester), '5.3+1.2');
-  });
-
-  testWidgets('00 button does not create leading zeros', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tap(tester, '00');
-    expect(_equationText(tester), '0');
-  });
-
-  testWidgets('= ignored when equation ends with operator', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['5', '+', '=']);
-    expect(_equationText(tester), '5+');
-  });
-
-  testWidgets('Percent not replaced by next operator', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['5', '0', '%', '×', '2']);
-    expect(_equationText(tester), '50%×2');
-  });
-
-  testWidgets('Cannot add percent twice', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['5', '%', '%']);
-    expect(_equationText(tester), '5%');
-  });
-
-  testWidgets('Decimal result removes trailing zeros', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['1', '0', '÷', '4', '=']);
-    expect(_resultText(tester), '2.5');
-  });
-
-  testWidgets('Chained calculation works', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    await _tapAll(tester, ['5', '+', '3', '=', '+', '2', '=']);
-    expect(_resultText(tester), '10');
+    testWidgets('no preview when ending with operator', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+']);
+      expect(_res(t), '0');
+    });
   });
 }

@@ -2,6 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:math_expressions/math_expressions.dart';
 
+class CalcButton {
+  final String text;
+  final Color? color;
+  final Color? textColor;
+  final int flex;
+
+  const CalcButton(this.text, {this.color, this.textColor, this.flex = 1});
+}
+
 class SimpleCalculator extends StatefulWidget {
   const SimpleCalculator({Key? key}) : super(key: key);
 
@@ -12,38 +21,80 @@ class SimpleCalculator extends StatefulWidget {
 class _SimpleCalculatorState extends State<SimpleCalculator> {
   String equation = "0";
   String result = "0";
+  String _preview = "";
   bool _calculated = false;
 
-  static const Color _bgColor = Color(0xFF1C1C1E);
-  static const Color _numberColor = Color(0xFF2C2C2E);
-  static const Color _functionColor = Color(0xFF3A3A3C);
-  static const Color _operatorColor = Color(0xFF0A84FF);
-  static const Color _accentColor = Color(0xFFFF453A);
-  static const Color _textColor = Colors.white;
-  static const Color _secondaryText = Color(0xFFA1A1A6);
-  static const Color _dividerColor = Color(0x1AFFFFFF);
+  static const _bgColor = Color(0xFF101014);
+  static const _numberColor = Color(0xFF2A2A2E);
+  static const _functionColor = Color(0xFF3A3A3C);
+  static const _operatorColor = Color(0xFF0A84FF);
+  static const _accentColor = Color(0xFFFF453A);
+  static const _textColor = Colors.white;
+  static const _secondaryText = Color(0xFF8E8E93);
+  static const _previewText = Color(0xFFAEAEB2);
 
-  static const Set<String> _infixOperators = {'+', '-', '×', '÷'};
+  static const _infixOperators = {'+', '-', '×', '÷'};
 
   bool _isInfixOperator(String s) => _infixOperators.contains(s);
 
-  bool _endsWithOperator() {
+  bool get _endsWithOperator {
     if (equation.isEmpty) return false;
     return _isInfixOperator(equation[equation.length - 1]);
   }
 
+  bool get _isErrorResult =>
+      result == "Error" || result == "Tidak terdefinisi";
+
   String _formatResult(String raw) {
-    double? val = double.tryParse(raw);
+    final val = double.tryParse(raw);
     if (val == null) return raw;
     if (val == val.toInt().toDouble() && !raw.contains('e')) {
       return val.toInt().toString();
     }
-    String formatted = val.toStringAsFixed(10);
+    var formatted = val.toStringAsFixed(10);
     formatted = formatted.replaceAll(RegExp(r'0+$'), '');
     if (formatted.endsWith('.')) {
       formatted = formatted.substring(0, formatted.length - 1);
     }
     return formatted;
+  }
+
+  String? _tryEvaluate(String eq) {
+    var expr = eq;
+    expr = expr.replaceAll('×', '*');
+    expr = expr.replaceAll('÷', '/');
+    expr = expr.replaceAll('%', '/100');
+
+    try {
+      final p = Parser();
+      final exp = p.parse(expr);
+      final cm = ContextModel();
+      final eval = exp.evaluate(EvaluationType.REAL, cm);
+
+      if (eval.isInfinite) return "Tidak terdefinisi";
+      if (eval.isNaN) return "Error";
+      return _formatResult('$eval');
+    } catch (e) {
+      return null;
+    }
+  }
+
+  void _updatePreview() {
+    if (_calculated || _endsWithOperator || equation == "0") {
+      _preview = "";
+      return;
+    }
+    _preview = _tryEvaluate(equation) ?? "";
+    if (_preview == equation) _preview = "";
+  }
+
+  String _getLastNumber() {
+    var last = "";
+    for (int i = equation.length - 1; i >= 0; i--) {
+      if (_isInfixOperator(equation[i])) break;
+      last = equation[i] + last;
+    }
+    return last;
   }
 
   void buttonPressed(String buttonText) {
@@ -53,6 +104,7 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
         case "AC":
           equation = "0";
           result = "0";
+          _preview = "";
           _calculated = false;
           break;
 
@@ -66,22 +118,28 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
           } else {
             equation = "0";
           }
+          _updatePreview();
           break;
 
         case "=":
-          if (!_endsWithOperator()) {
-            _calculate();
+          if (!_endsWithOperator && equation != "0") {
+            final evalResult = _tryEvaluate(equation);
+            result = evalResult ?? "Error";
+            _calculated = true;
+            _preview = "";
           }
           break;
 
         case "%":
-          if (equation != "0" && !_endsWithOperator() && !equation.endsWith('%')) {
-            equation = equation + "%";
+          if (equation != "0" && !_endsWithOperator && !equation.endsWith('%')) {
+            equation += "%";
+            _updatePreview();
           }
           break;
 
         default:
           _handleInput(buttonText);
+          _updatePreview();
       }
     });
   }
@@ -89,14 +147,20 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
   void _handleInput(String buttonText) {
     if (_isInfixOperator(buttonText)) {
       if (_calculated) {
+        if (_isErrorResult) {
+          equation = "0";
+          result = "0";
+          _calculated = false;
+          return;
+        }
         equation = result;
         _calculated = false;
       }
       if (equation == "0" && buttonText != '-') return;
-      if (_endsWithOperator()) {
+      if (_endsWithOperator) {
         equation = equation.substring(0, equation.length - 1) + buttonText;
       } else {
-        equation = equation + buttonText;
+        equation += buttonText;
       }
     } else if (buttonText == ".") {
       if (_calculated) {
@@ -105,86 +169,69 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
         _calculated = false;
         return;
       }
-      String lastNumber = _getLastNumber();
+      final lastNumber = _getLastNumber();
       if (!lastNumber.contains('.')) {
-        if (_endsWithOperator()) {
-          equation = equation + "0.";
+        if (_endsWithOperator) {
+          equation += "0.";
         } else if (equation == "0") {
           equation = "0.";
         } else {
-          equation = equation + ".";
+          equation += ".";
         }
       }
     } else {
-      if (_calculated) {
-        equation = (buttonText == "00") ? "0" : buttonText;
-        result = "0";
-        _calculated = false;
-      } else if (equation == "0") {
-        equation = (buttonText == "00") ? "0" : buttonText;
-      } else {
-        String lastNumber = _getLastNumber();
-        if (lastNumber == "0" && buttonText == "00") return;
-        equation = equation + buttonText;
-      }
+      _handleDigit(buttonText);
     }
   }
 
-  String _getLastNumber() {
-    String last = "";
-    for (int i = equation.length - 1; i >= 0; i--) {
-      if (_isInfixOperator(equation[i])) break;
-      last = equation[i] + last;
+  void _handleDigit(String digit) {
+    if (_calculated) {
+      equation = (digit == "00") ? "0" : digit;
+      result = "0";
+      _calculated = false;
+      return;
     }
-    return last;
+
+    if (equation == "0") {
+      equation = (digit == "00") ? "0" : digit;
+      return;
+    }
+
+    final lastNumber = _getLastNumber();
+
+    if (lastNumber.isEmpty) {
+      equation += (digit == "00") ? "0" : digit;
+    } else if (lastNumber == "0") {
+      if (digit == "0" || digit == "00") return;
+      equation = equation.substring(0, equation.length - 1) + digit;
+    } else {
+      equation += digit;
+    }
   }
 
-  void _calculate() {
-    String expr = equation;
-    expr = expr.replaceAll('×', '*');
-    expr = expr.replaceAll('÷', '/');
-    expr = expr.replaceAll('%', '/100');
-
-    try {
-      Parser p = Parser();
-      Expression exp = p.parse(expr);
-      ContextModel cm = ContextModel();
-      double eval = exp.evaluate(EvaluationType.REAL, cm);
-
-      if (eval.isInfinite) {
-        result = "Tidak terdefinisi";
-      } else if (eval.isNaN) {
-        result = "Error";
-      } else {
-        result = _formatResult('$eval');
-      }
-    } catch (e) {
-      result = "Error";
-    }
-    _calculated = true;
-  }
-
-  Widget _buildButton(String text, {Color? color, Color? textColor, int flex = 1}) {
+  Widget _buildButton(CalcButton config) {
     return Expanded(
-      flex: flex,
+      flex: config.flex,
       child: Padding(
-        padding: const EdgeInsets.all(4.0),
+        padding: const EdgeInsets.all(3.5),
         child: Material(
-          color: color ?? _numberColor,
-          borderRadius: BorderRadius.circular(16),
+          color: config.color ?? _numberColor,
+          borderRadius: BorderRadius.circular(18),
           clipBehavior: Clip.antiAlias,
+          elevation: 2,
+          shadowColor: Colors.black54,
           child: InkWell(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(18),
             splashColor: Colors.white24,
             highlightColor: Colors.white10,
-            onTap: () => buttonPressed(text),
+            onTap: () => buttonPressed(config.text),
             child: Center(
               child: Text(
-                text,
+                config.text,
                 style: TextStyle(
-                  fontSize: 28,
+                  fontSize: 26,
                   fontWeight: FontWeight.w500,
-                  color: textColor ?? _textColor,
+                  color: config.textColor ?? _textColor,
                 ),
               ),
             ),
@@ -194,24 +241,25 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
     );
   }
 
-  Widget _buildButtonRow(List<Map<String, dynamic>> buttons) {
+  Widget _buildButtonRow(List<CalcButton> buttons) {
     return Expanded(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: buttons.map((b) {
-          return _buildButton(
-            b['text'] as String,
-            color: b['color'] as Color?,
-            textColor: b['textColor'] as Color?,
-            flex: (b['flex'] as int?) ?? 1,
-          );
-        }).toList(),
+        children: buttons.map(_buildButton).toList(),
       ),
     );
   }
 
+  String get _displayResult {
+    if (_calculated) return result;
+    if (_preview.isNotEmpty) return _preview;
+    return result;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final showPreview = !_calculated && _preview.isNotEmpty;
+
     return Scaffold(
       backgroundColor: _bgColor,
       body: SafeArea(
@@ -219,9 +267,8 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
           children: [
             Expanded(
               flex: 2,
-              child: Container(
+              child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                alignment: Alignment.bottomRight,
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.end,
                   crossAxisAlignment: CrossAxisAlignment.end,
@@ -229,29 +276,37 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
                     SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       reverse: true,
-                      child: Text(
-                        equation,
-                        key: const Key('equation'),
+                      child: AnimatedDefaultTextStyle(
+                        duration: const Duration(milliseconds: 200),
                         style: TextStyle(
-                          fontSize: _calculated ? 28 : 44,
+                          fontSize: _calculated ? 26 : 42,
                           fontWeight: FontWeight.w300,
                           color: _calculated ? _secondaryText : _textColor,
-                          letterSpacing: 1.2,
+                          letterSpacing: 1.5,
+                        ),
+                        child: Text(
+                          equation,
+                          key: const Key('equation'),
                         ),
                       ),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 14),
                     SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       reverse: true,
-                      child: Text(
-                        result,
-                        key: const Key('result'),
+                      child: AnimatedDefaultTextStyle(
+                        duration: const Duration(milliseconds: 200),
                         style: TextStyle(
-                          fontSize: _calculated ? 52 : 32,
+                          fontSize: _calculated ? 52 : (showPreview ? 30 : 28),
                           fontWeight: _calculated ? FontWeight.w400 : FontWeight.w300,
-                          color: _calculated ? _textColor : _secondaryText,
+                          color: _calculated
+                              ? _textColor
+                              : (showPreview ? _previewText : _secondaryText),
                           letterSpacing: 1.0,
+                        ),
+                        child: Text(
+                          _displayResult,
+                          key: const Key('result'),
                         ),
                       ),
                     ),
@@ -261,45 +316,56 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
             ),
 
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Divider(color: _dividerColor, height: 1),
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Container(
+                height: 1,
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      Color(0x00FFFFFF),
+                      Color(0x33FFFFFF),
+                      Color(0x00FFFFFF),
+                    ],
+                  ),
+                ),
+              ),
             ),
 
             Expanded(
               flex: 3,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
+                padding: const EdgeInsets.fromLTRB(6, 6, 6, 10),
                 child: Column(
                   children: [
                     _buildButtonRow([
-                      {'text': 'AC', 'color': _accentColor},
-                      {'text': '⌫', 'color': _functionColor},
-                      {'text': '%', 'color': _functionColor},
-                      {'text': '÷', 'color': _operatorColor},
+                      const CalcButton('AC', color: _accentColor),
+                      const CalcButton('⌫', color: _functionColor),
+                      const CalcButton('%', color: _functionColor),
+                      const CalcButton('÷', color: _operatorColor),
                     ]),
                     _buildButtonRow([
-                      {'text': '7'},
-                      {'text': '8'},
-                      {'text': '9'},
-                      {'text': '×', 'color': _operatorColor},
+                      const CalcButton('7'),
+                      const CalcButton('8'),
+                      const CalcButton('9'),
+                      const CalcButton('×', color: _operatorColor),
                     ]),
                     _buildButtonRow([
-                      {'text': '4'},
-                      {'text': '5'},
-                      {'text': '6'},
-                      {'text': '-', 'color': _operatorColor},
+                      const CalcButton('4'),
+                      const CalcButton('5'),
+                      const CalcButton('6'),
+                      const CalcButton('-', color: _operatorColor),
                     ]),
                     _buildButtonRow([
-                      {'text': '1'},
-                      {'text': '2'},
-                      {'text': '3'},
-                      {'text': '+', 'color': _operatorColor},
+                      const CalcButton('1'),
+                      const CalcButton('2'),
+                      const CalcButton('3'),
+                      const CalcButton('+', color: _operatorColor),
                     ]),
                     _buildButtonRow([
-                      {'text': '00'},
-                      {'text': '0'},
-                      {'text': '.'},
-                      {'text': '=', 'color': _accentColor},
+                      const CalcButton('00'),
+                      const CalcButton('0'),
+                      const CalcButton('.'),
+                      const CalcButton('=', color: _accentColor),
                     ]),
                   ],
                 ),
@@ -311,4 +377,3 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
     );
   }
 }
-
