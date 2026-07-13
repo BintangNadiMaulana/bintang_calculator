@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:math_expressions/math_expressions.dart';
 
 class SimpleCalculator extends StatefulWidget {
@@ -14,20 +15,21 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
   bool _calculated = false;
 
   static const Color _bgColor = Color(0xFF1C1C1E);
-  static const Color _displayBg = Color(0xFF1C1C1E);
   static const Color _numberColor = Color(0xFF2C2C2E);
+  static const Color _functionColor = Color(0xFF3A3A3C);
   static const Color _operatorColor = Color(0xFF0A84FF);
   static const Color _accentColor = Color(0xFFFF453A);
   static const Color _textColor = Colors.white;
   static const Color _secondaryText = Color(0xFFA1A1A6);
+  static const Color _dividerColor = Color(0x1AFFFFFF);
 
-  static const Set<String> _operators = {'+', '-', '×', '÷', '%'};
+  static const Set<String> _infixOperators = {'+', '-', '×', '÷'};
 
-  bool _isOperator(String s) => _operators.contains(s);
+  bool _isInfixOperator(String s) => _infixOperators.contains(s);
 
   bool _endsWithOperator() {
     if (equation.isEmpty) return false;
-    return _isOperator(equation[equation.length - 1]);
+    return _isInfixOperator(equation[equation.length - 1]);
   }
 
   String _formatResult(String raw) {
@@ -45,6 +47,7 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
   }
 
   void buttonPressed(String buttonText) {
+    HapticFeedback.lightImpact();
     setState(() {
       switch (buttonText) {
         case "AC":
@@ -66,11 +69,13 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
           break;
 
         case "=":
-          _calculate();
+          if (!_endsWithOperator()) {
+            _calculate();
+          }
           break;
 
         case "%":
-          if (equation != "0" && !_endsWithOperator()) {
+          if (equation != "0" && !_endsWithOperator() && !equation.endsWith('%')) {
             equation = equation + "%";
           }
           break;
@@ -82,8 +87,11 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
   }
 
   void _handleInput(String buttonText) {
-    if (_isOperator(buttonText)) {
-      _calculated = false;
+    if (_isInfixOperator(buttonText)) {
+      if (_calculated) {
+        equation = result;
+        _calculated = false;
+      }
       if (equation == "0" && buttonText != '-') return;
       if (_endsWithOperator()) {
         equation = equation.substring(0, equation.length - 1) + buttonText;
@@ -91,27 +99,32 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
         equation = equation + buttonText;
       }
     } else if (buttonText == ".") {
-      _calculated = false;
+      if (_calculated) {
+        equation = "0.";
+        result = "0";
+        _calculated = false;
+        return;
+      }
       String lastNumber = _getLastNumber();
       if (!lastNumber.contains('.')) {
-        if (_endsWithOperator() || equation == "0") {
-          if (equation == "0") {
-            equation = "0.";
-          } else {
-            equation = equation + "0.";
-          }
+        if (_endsWithOperator()) {
+          equation = equation + "0.";
+        } else if (equation == "0") {
+          equation = "0.";
         } else {
           equation = equation + ".";
         }
       }
     } else {
       if (_calculated) {
-        equation = buttonText;
+        equation = (buttonText == "00") ? "0" : buttonText;
         result = "0";
         _calculated = false;
       } else if (equation == "0") {
-        equation = buttonText;
+        equation = (buttonText == "00") ? "0" : buttonText;
       } else {
+        String lastNumber = _getLastNumber();
+        if (lastNumber == "0" && buttonText == "00") return;
         equation = equation + buttonText;
       }
     }
@@ -120,21 +133,21 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
   String _getLastNumber() {
     String last = "";
     for (int i = equation.length - 1; i >= 0; i--) {
-      if (_isOperator(equation[i])) break;
+      if (_isInfixOperator(equation[i])) break;
       last = equation[i] + last;
     }
     return last;
   }
 
   void _calculate() {
-    String expression = equation;
-    expression = expression.replaceAll('×', '*');
-    expression = expression.replaceAll('÷', '/');
-    expression = expression.replaceAll('%', '/100');
+    String expr = equation;
+    expr = expr.replaceAll('×', '*');
+    expr = expr.replaceAll('÷', '/');
+    expr = expr.replaceAll('%', '/100');
 
     try {
       Parser p = Parser();
-      Expression exp = p.parse(expression);
+      Expression exp = p.parse(expr);
       ContextModel cm = ContextModel();
       double eval = exp.evaluate(EvaluationType.REAL, cm);
 
@@ -159,12 +172,13 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
         child: Material(
           color: color ?? _numberColor,
           borderRadius: BorderRadius.circular(16),
+          clipBehavior: Clip.antiAlias,
           child: InkWell(
             borderRadius: BorderRadius.circular(16),
+            splashColor: Colors.white24,
+            highlightColor: Colors.white10,
             onTap: () => buttonPressed(text),
-            child: Container(
-              height: 70,
-              alignment: Alignment.center,
+            child: Center(
               child: Text(
                 text,
                 style: TextStyle(
@@ -181,15 +195,18 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
   }
 
   Widget _buildButtonRow(List<Map<String, dynamic>> buttons) {
-    return Row(
-      children: buttons.map((b) {
-        return _buildButton(
-          b['text'] as String,
-          color: b['color'] as Color?,
-          textColor: b['textColor'] as Color?,
-          flex: (b['flex'] as int?) ?? 1,
-        );
-      }).toList(),
+    return Expanded(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: buttons.map((b) {
+          return _buildButton(
+            b['text'] as String,
+            color: b['color'] as Color?,
+            textColor: b['textColor'] as Color?,
+            flex: (b['flex'] as int?) ?? 1,
+          );
+        }).toList(),
+      ),
     );
   }
 
@@ -200,10 +217,9 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
       body: SafeArea(
         child: Column(
           children: [
-            // Display area
             Expanded(
+              flex: 2,
               child: Container(
-                color: _displayBg,
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                 alignment: Alignment.bottomRight,
                 child: Column(
@@ -216,22 +232,24 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
                       child: Text(
                         equation,
                         style: TextStyle(
-                          fontSize: _calculated ? 32 : 48,
+                          fontSize: _calculated ? 28 : 44,
                           fontWeight: FontWeight.w300,
                           color: _calculated ? _secondaryText : _textColor,
+                          letterSpacing: 1.2,
                         ),
                       ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 16),
                     SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       reverse: true,
                       child: Text(
                         result,
                         style: TextStyle(
-                          fontSize: _calculated ? 56 : 36,
+                          fontSize: _calculated ? 52 : 32,
                           fontWeight: _calculated ? FontWeight.w400 : FontWeight.w300,
                           color: _calculated ? _textColor : _secondaryText,
+                          letterSpacing: 1.0,
                         ),
                       ),
                     ),
@@ -240,48 +258,49 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
               ),
             ),
 
-            // Divider
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Divider(color: Colors.white.withValues(alpha: 0.1), height: 1),
+              child: Divider(color: _dividerColor, height: 1),
             ),
 
-            // Button grid
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 8, 8, 16),
-              child: Column(
-                children: [
-                  _buildButtonRow([
-                    {'text': 'AC', 'color': _accentColor},
-                    {'text': '⌫', 'color': const Color(0xFF3A3A3C)},
-                    {'text': '%', 'color': const Color(0xFF3A3A3C)},
-                    {'text': '÷', 'color': _operatorColor},
-                  ]),
-                  _buildButtonRow([
-                    {'text': '7'},
-                    {'text': '8'},
-                    {'text': '9'},
-                    {'text': '×', 'color': _operatorColor},
-                  ]),
-                  _buildButtonRow([
-                    {'text': '4'},
-                    {'text': '5'},
-                    {'text': '6'},
-                    {'text': '-', 'color': _operatorColor},
-                  ]),
-                  _buildButtonRow([
-                    {'text': '1'},
-                    {'text': '2'},
-                    {'text': '3'},
-                    {'text': '+', 'color': _operatorColor},
-                  ]),
-                  _buildButtonRow([
-                    {'text': '00'},
-                    {'text': '0'},
-                    {'text': '.'},
-                    {'text': '=', 'color': _accentColor},
-                  ]),
-                ],
+            Expanded(
+              flex: 3,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
+                child: Column(
+                  children: [
+                    _buildButtonRow([
+                      {'text': 'AC', 'color': _accentColor},
+                      {'text': '⌫', 'color': _functionColor},
+                      {'text': '%', 'color': _functionColor},
+                      {'text': '÷', 'color': _operatorColor},
+                    ]),
+                    _buildButtonRow([
+                      {'text': '7'},
+                      {'text': '8'},
+                      {'text': '9'},
+                      {'text': '×', 'color': _operatorColor},
+                    ]),
+                    _buildButtonRow([
+                      {'text': '4'},
+                      {'text': '5'},
+                      {'text': '6'},
+                      {'text': '-', 'color': _operatorColor},
+                    ]),
+                    _buildButtonRow([
+                      {'text': '1'},
+                      {'text': '2'},
+                      {'text': '3'},
+                      {'text': '+', 'color': _operatorColor},
+                    ]),
+                    _buildButtonRow([
+                      {'text': '00'},
+                      {'text': '0'},
+                      {'text': '.'},
+                      {'text': '=', 'color': _accentColor},
+                    ]),
+                  ],
+                ),
               ),
             ),
           ],
@@ -290,3 +309,4 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
     );
   }
 }
+
