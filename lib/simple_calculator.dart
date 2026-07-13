@@ -231,6 +231,7 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
                       reverse: true,
                       child: Text(
                         equation,
+                        key: const Key('equation'),
                         style: TextStyle(
                           fontSize: _calculated ? 28 : 44,
                           fontWeight: FontWeight.w300,
@@ -245,6 +246,7 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
                       reverse: true,
                       child: Text(
                         result,
+                        key: const Key('result'),
                         style: TextStyle(
                           fontSize: _calculated ? 52 : 32,
                           fontWeight: _calculated ? FontWeight.w400 : FontWeight.w300,
