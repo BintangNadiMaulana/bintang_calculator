@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:calculator_bintang/models/calc_button.dart';
 import 'package:calculator_bintang/models/calc_record.dart';
 import 'package:calculator_bintang/utils/calculator_logic.dart';
@@ -30,6 +33,38 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
   static const _secondaryText = Color(0xFF8E8E93);
   static const _previewText = Color(0xFFAEAEB2);
   static const _equalsColor = Color(0xFF30D158);
+
+  static final _digitOrCloseOrPercent = RegExp(r'[0-9)%]');
+  static final _compoundChars = RegExp(r'[+\-×÷()%]');
+  static const _historyKey = 'calc_history';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHistory();
+  }
+
+  Future<void> _loadHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final data = prefs.getStringList(_historyKey);
+    if (data != null) {
+      setState(() {
+        _history.clear();
+        for (final item in data) {
+          final map = jsonDecode(item) as Map<String, dynamic>;
+          _history.add(CalcRecord(map['eq'] as String, map['res'] as String));
+        }
+      });
+    }
+  }
+
+  Future<void> _saveHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final data = _history
+        .map((r) => jsonEncode({'eq': r.equation, 'res': r.result}))
+        .toList();
+    await prefs.setStringList(_historyKey, data);
+  }
 
   bool get _endsWithOperator {
     if (equation.isEmpty) return false;
@@ -140,6 +175,7 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
     if (!_isErrorResult) {
       _history.insert(0, CalcRecord(equation, result));
       if (_history.length > 50) _history.removeLast();
+      _saveHistory();
     }
   }
 
@@ -166,9 +202,9 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
     final openCount = '('.allMatches(equation).length;
     final closeCount = ')'.allMatches(equation).length;
 
-    if (openCount > closeCount && RegExp(r'[0-9)%]').hasMatch(lastChar)) {
+    if (openCount > closeCount && _digitOrCloseOrPercent.hasMatch(lastChar)) {
       equation += ")";
-    } else if (RegExp(r'[0-9)%]').hasMatch(lastChar)) {
+    } else if (_digitOrCloseOrPercent.hasMatch(lastChar)) {
       equation += "×(";
     } else {
       equation += "(";
@@ -188,7 +224,7 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
 
     final withoutMinus =
         equation.startsWith('-') ? equation.substring(1) : equation;
-    final isSimple = !withoutMinus.contains(RegExp(r'[+\-×÷()%]'));
+    final isSimple = !withoutMinus.contains(_compoundChars);
 
     if (isSimple) {
       equation =
@@ -337,6 +373,7 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
         },
         onClear: () {
           setState(() => _history.clear());
+          _saveHistory();
           Navigator.pop(context);
         },
       ),
@@ -401,10 +438,10 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
                                 color: _secondaryText, size: 22),
                           ),
                           const Spacer(),
-                          Text('swipe → hapus',
+                          const Text('swipe → hapus',
                               style: TextStyle(
                                   fontSize: 10,
-                                  color: const Color(0x508E8E93))),
+                                  color: Color(0x508E8E93))),
                         ],
                       ),
                       Expanded(
@@ -490,38 +527,49 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
                 child: Column(
                   children: [
                     _buildButtonRow([
-                      const CalcButton('()', color: _functionColor),
-                      const CalcButton('⌫', color: _functionColor),
-                      const CalcButton('%', color: _functionColor),
-                      const CalcButton('AC', color: _accentColor),
+                      const CalcButton('()', color: _functionColor, semanticLabel: 'Kurung'),
+                      const CalcButton('⌫', color: _functionColor, semanticLabel: 'Hapus'),
+                      const CalcButton('%', color: _functionColor, semanticLabel: 'Persen'),
+                      const CalcButton('AC', color: _accentColor, semanticLabel: 'Hapus semua'),
                     ]),
                     _buildButtonRow([
                       const CalcButton('7'),
                       const CalcButton('8'),
                       const CalcButton('9'),
-                      const CalcButton('÷', color: _operatorColor),
+                      const CalcButton('÷', color: _operatorColor, semanticLabel: 'Bagi'),
                     ]),
                     _buildButtonRow([
                       const CalcButton('4'),
                       const CalcButton('5'),
                       const CalcButton('6'),
-                      const CalcButton('×', color: _operatorColor),
+                      const CalcButton('×', color: _operatorColor, semanticLabel: 'Kali'),
                     ]),
                     _buildButtonRow([
                       const CalcButton('1'),
                       const CalcButton('2'),
                       const CalcButton('3'),
-                      const CalcButton('-', color: _operatorColor),
+                      const CalcButton('-', color: _operatorColor, semanticLabel: 'Kurang'),
                     ]),
                     _buildButtonRow([
-                      const CalcButton('±'),
+                      const CalcButton('±', semanticLabel: 'Plus minus'),
                       const CalcButton('0'),
-                      const CalcButton('.'),
-                      const CalcButton('+', color: _operatorColor),
+                      const CalcButton('.', semanticLabel: 'Titik desimal'),
+                      const CalcButton('+', color: _operatorColor, semanticLabel: 'Tambah'),
                     ]),
-                    _buildButtonRow([
-                      const CalcButton('=', color: _equalsColor),
-                    ]),
+                    SizedBox(
+                      height: 52,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          CalculatorButtonWidget(
+                            config: const CalcButton('=', color: _equalsColor, semanticLabel: 'Sama dengan'),
+                            defaultColor: _numberColor,
+                            defaultTextColor: _textColor,
+                            onPressed: buttonPressed,
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),

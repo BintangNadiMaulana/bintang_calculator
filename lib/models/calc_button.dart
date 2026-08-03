@@ -5,5 +5,7 @@ class CalcButton {
   final Color? color;
   final Color? textColor;
   final int flex;
-  const CalcButton(this.text, {this.color, this.textColor, this.flex = 1});
+  final String? semanticLabel;
+  const CalcButton(this.text,
+      {this.color, this.textColor, this.flex = 1, this.semanticLabel});
 }
