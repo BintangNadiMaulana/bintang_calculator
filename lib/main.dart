@@ -1,18 +1,29 @@
-import 'package:calculator_bintang/screens/simple_calculator.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:calculator_bintang/screens/simple_calculator.dart';
+
+/// Warna latar aplikasi, dipakai juga untuk navigation bar sistem
+/// agar tampilannya menyatu dengan layar.
+const _backgroundColor = Color(0xFF101014);
+
 void main() {
+  // Wajib dipanggil sebelum memakai API platform seperti `SystemChrome`.
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+
+  // Kalkulator dirancang untuk mode potret; rotasi akan merusak
+  // proporsi tombol.
+  SystemChrome.setPreferredOrientations(const [DeviceOrientation.portraitUp]);
+
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: Brightness.light,
-      systemNavigationBarColor: Color(0xFF101014),
+      systemNavigationBarColor: _backgroundColor,
       systemNavigationBarIconBrightness: Brightness.light,
     ),
   );
+
   runApp(const MyApp());
 }
 
@@ -26,8 +37,8 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF101014),
-        primarySwatch: Colors.blue,
+        scaffoldBackgroundColor: _backgroundColor,
+        useMaterial3: false,
       ),
       home: const SimpleCalculator(),
     );

@@ -2,6 +2,17 @@ include: package:flutter_lints/flutter.yaml
 
 linter:
   rules:
+    # Mendorong penggunaan `const` agar widget tidak dibangun ulang
+    # tanpa perlu saat rebuild.
     prefer_const_constructors: true
     prefer_const_declarations: true
+    prefer_const_literals_to_create_immutables: true
+
+    # Melarang `print` di kode produksi.
     avoid_print: true
+
+    # Gunakan `super.key` alih-alih meneruskan `Key? key` secara manual.
+    use_super_parameters: true
+
+    # `child` diletakkan terakhir agar struktur widget mudah dibaca.
+    sort_child_properties_last: true

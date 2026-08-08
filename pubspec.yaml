@@ -10,7 +10,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Parser ekspresi matematika untuk mengevaluasi input pengguna.
   math_expressions: ^2.4.0
+  # Menyimpan riwayat perhitungan agar tidak hilang saat aplikasi ditutup.
   shared_preferences: ^2.2.0
 
 dev_dependencies:

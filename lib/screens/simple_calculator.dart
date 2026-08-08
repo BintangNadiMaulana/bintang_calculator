@@ -1,28 +1,45 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:calculator_bintang/models/calc_button.dart';
 import 'package:calculator_bintang/models/calc_record.dart';
 import 'package:calculator_bintang/utils/calculator_logic.dart';
 import 'package:calculator_bintang/utils/formatting.dart';
+import 'package:calculator_bintang/utils/history_storage.dart';
 import 'package:calculator_bintang/widgets/calculator_button.dart';
 import 'package:calculator_bintang/widgets/history_sheet.dart';
 
+/// Layar utama kalkulator.
+///
+/// Seluruh state dan logika input berada di sini, sementara tampilan tombol
+/// dan panel riwayat didelegasikan ke widget terpisah.
 class SimpleCalculator extends StatefulWidget {
-  const SimpleCalculator({Key? key}) : super(key: key);
+  const SimpleCalculator({super.key});
 
   @override
   State<SimpleCalculator> createState() => _SimpleCalculatorState();
 }
 
 class _SimpleCalculatorState extends State<SimpleCalculator> {
-  String equation = "0";
-  String result = "0";
-  String _preview = "";
+  // ── State ──
+
+  /// Ekspresi mentah yang sedang diketik, tanpa spasi. Contoh: `"5+3×2"`.
+  String equation = '0';
+
+  /// Hasil terakhir setelah tombol `=` ditekan.
+  String result = '0';
+
+  /// Hasil sementara yang dihitung otomatis saat pengguna mengetik.
+  String _preview = '';
+
+  /// Menandai bahwa `=` baru saja ditekan. Flag ini menentukan bagaimana
+  /// input berikutnya diperlakukan — melanjutkan hasil atau memulai baru.
   bool _calculated = false;
+
   final List<CalcRecord> _history = [];
+  final HistoryStorage _storage = const HistoryStorage();
+
+  // ── Konstanta warna ──
 
   static const _bgColor = Color(0xFF101014);
   static const _numberColor = Color(0xFF2A2A2E);
@@ -33,10 +50,21 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
   static const _secondaryText = Color(0xFF8E8E93);
   static const _previewText = Color(0xFFAEAEB2);
   static const _equalsColor = Color(0xFF30D158);
+  static const _hintColor = Color(0x508E8E93);
+  static const _sheetColor = Color(0xFF1C1C1E);
 
+  // ── Konstanta lain ──
+
+  /// Tinggi tetap baris tombol `=`. Tanpa ini, di layar tinggi seperti tablet
+  /// tombol `=` akan ikut memanjang dan terlihat tidak proporsional.
+  static const _equalsRowHeight = 56.0;
+
+  /// Dikompilasi sekali sebagai `static final` agar tidak dialokasikan ulang
+  /// setiap kali tombol ditekan.
   static final _digitOrCloseOrPercent = RegExp(r'[0-9)%]');
   static final _compoundChars = RegExp(r'[+\-×÷()%]');
-  static const _historyKey = 'calc_history';
+
+  // ── Siklus hidup ──
 
   @override
   void initState() {
@@ -45,26 +73,20 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
   }
 
   Future<void> _loadHistory() async {
-    final prefs = await SharedPreferences.getInstance();
-    final data = prefs.getStringList(_historyKey);
-    if (data != null) {
-      setState(() {
-        _history.clear();
-        for (final item in data) {
-          final map = jsonDecode(item) as Map<String, dynamic>;
-          _history.add(CalcRecord(map['eq'] as String, map['res'] as String));
-        }
-      });
-    }
+    final records = await _storage.load();
+
+    // Widget bisa saja sudah dilepas sebelum pemuatan selesai —
+    // memanggil `setState` setelah itu akan melempar exception.
+    if (!mounted || records.isEmpty) return;
+
+    setState(() {
+      _history
+        ..clear()
+        ..addAll(records);
+    });
   }
 
-  Future<void> _saveHistory() async {
-    final prefs = await SharedPreferences.getInstance();
-    final data = _history
-        .map((r) => jsonEncode({'eq': r.equation, 'res': r.result}))
-        .toList();
-    await prefs.setStringList(_historyKey, data);
-  }
+  // ── Getter bantu ──
 
   bool get _endsWithOperator {
     if (equation.isEmpty) return false;
@@ -72,69 +94,80 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
   }
 
   bool get _isErrorResult =>
-      result == "Error" || result == "Tidak terdefinisi";
+      result == 'Error' || result == 'Tidak terdefinisi';
 
-  // ── Preview ──
+  /// Jumlah kurung buka yang belum ditutup.
+  int get _unclosedParens =>
+      '('.allMatches(equation).length - ')'.allMatches(equation).length;
 
-  void _updatePreview() {
-    if (_calculated || _endsWithOperator ||
-        equation == "0" || equation.endsWith('(')) {
-      _preview = "";
-      return;
-    }
-
-    final openCount = '('.allMatches(equation).length;
-    final closeCount = ')'.allMatches(equation).length;
-
-    var evalExpr = equation;
-    for (int i = 0; i < openCount - closeCount; i++) {
-      evalExpr += ')';
-    }
-
-    _preview = CalculatorLogic.tryEvaluate(evalExpr) ?? "";
-    if (_preview == equation) _preview = "";
-  }
-
-  // ── Helpers ──
-
+  /// Angka yang sedang diketik, yaitu deretan karakter setelah operator
+  /// atau kurung terakhir. Dipakai untuk memvalidasi titik desimal
+  /// dan angka nol di depan.
   String _getLastNumber() {
-    var last = "";
+    // Telusuri mundur dari akhir ekspresi sampai bertemu operator
+    // atau kurung, lalu ambil potongan setelahnya.
+    var start = equation.length;
     for (int i = equation.length - 1; i >= 0; i--) {
       final ch = equation[i];
       if (CalculatorLogic.isInfixOperator(ch) || ch == '(' || ch == ')') break;
-      last = ch + last;
+      start = i;
     }
-    return last;
+    return equation.substring(start);
   }
 
-  // ── Input handling ──
+  // ── Preview ──
 
+  /// Menghitung ulang hasil sementara berdasarkan [equation] saat ini.
+  ///
+  /// Preview disembunyikan bila ekspresi belum bisa dihitung — misalnya
+  /// masih berakhir dengan operator atau kurung buka.
+  void _updatePreview() {
+    if (_calculated ||
+        _endsWithOperator ||
+        equation == '0' ||
+        equation.endsWith('(')) {
+      _preview = '';
+      return;
+    }
+
+    // Kurung yang belum ditutup ditutup sementara agar ekspresi bisa
+    // dievaluasi, tanpa mengubah apa yang tampil di layar.
+    final evalExpr = equation + (')' * _unclosedParens);
+
+    _preview = CalculatorLogic.tryEvaluate(evalExpr) ?? '';
+
+    // Tidak ada gunanya menampilkan preview yang sama persis dengan
+    // ekspresi yang sedang diketik.
+    if (_preview == equation) _preview = '';
+  }
+
+  // ── Penanganan input ──
+
+  /// Titik masuk tunggal untuk semua penekanan tombol.
   void buttonPressed(String buttonText) {
     HapticFeedback.lightImpact();
+
     setState(() {
       switch (buttonText) {
-        case "AC":
-          equation = "0";
-          result = "0";
-          _preview = "";
-          _calculated = false;
+        case 'AC':
+          _handleClear();
           break;
-        case "⌫":
+        case '⌫':
           _handleBackspace();
           _updatePreview();
           break;
-        case "=":
+        case '=':
           _handleEquals();
           break;
-        case "%":
+        case '%':
           _handlePercent();
           _updatePreview();
           break;
-        case "()":
+        case '()':
           _handleParenthesis();
           _updatePreview();
           break;
-        case "±":
+        case '±':
           _handleSignToggle();
           _updatePreview();
           break;
@@ -145,88 +178,105 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
     });
   }
 
+  void _handleClear() {
+    equation = '0';
+    result = '0';
+    _preview = '';
+    _calculated = false;
+  }
+
   void _handleBackspace() {
     if (_calculated) {
-      equation = "0";
-      result = "0";
-      _calculated = false;
+      // Setelah `=`, backspace berfungsi seperti AC — hasil sebelumnya
+      // tidak bisa diedit sebagian.
+      _handleClear();
     } else if (equation.length > 1) {
       equation = equation.substring(0, equation.length - 1);
     } else {
-      equation = "0";
+      equation = '0';
     }
   }
 
   void _handleEquals() {
-    if (_endsWithOperator || equation == "0" || equation.endsWith('(')) return;
+    // Ekspresi yang belum lengkap tidak dihitung.
+    if (_endsWithOperator || equation == '0' || equation.endsWith('(')) return;
+
+    // Menekan `=` berulang kali tidak menghitung ulang hasil.
     if (_calculated) return;
 
-    final openCount = '('.allMatches(equation).length;
-    final closeCount = ')'.allMatches(equation).length;
-    for (int i = 0; i < openCount - closeCount; i++) {
-      equation += ')';
-    }
+    equation += ')' * _unclosedParens;
 
-    final evalResult = CalculatorLogic.tryEvaluate(equation);
-    result = evalResult ?? "Error";
+    result = CalculatorLogic.tryEvaluate(equation) ?? 'Error';
     _calculated = true;
-    _preview = "";
+    _preview = '';
 
     if (!_isErrorResult) {
       _history.insert(0, CalcRecord(equation, result));
-      if (_history.length > 50) _history.removeLast();
-      _saveHistory();
+      if (_history.length > HistoryStorage.maxEntries) _history.removeLast();
+      // Penyimpanan berjalan di latar belakang; kegagalannya sudah
+      // ditangani di dalam HistoryStorage.
+      _storage.save(_history);
     }
   }
 
   void _handlePercent() {
-    if (equation == "0" || _endsWithOperator ||
-        equation.endsWith('%') || equation.endsWith('(')) return;
-    equation += "%";
+    if (equation == '0' ||
+        _endsWithOperator ||
+        equation.endsWith('%') ||
+        equation.endsWith('(')) {
+      return;
+    }
+    equation += '%';
   }
 
+  /// Tombol `()` cerdas: menentukan sendiri kapan membuka dan menutup kurung.
   void _handleParenthesis() {
     if (_calculated) {
-      equation = "(";
-      result = "0";
+      equation = '(';
+      result = '0';
       _calculated = false;
       return;
     }
 
-    if (equation == "0") {
-      equation = "(";
+    if (equation == '0') {
+      equation = '(';
       return;
     }
 
     final lastChar = equation[equation.length - 1];
-    final openCount = '('.allMatches(equation).length;
-    final closeCount = ')'.allMatches(equation).length;
+    final afterValue = _digitOrCloseOrPercent.hasMatch(lastChar);
 
-    if (openCount > closeCount && _digitOrCloseOrPercent.hasMatch(lastChar)) {
-      equation += ")";
-    } else if (_digitOrCloseOrPercent.hasMatch(lastChar)) {
-      equation += "×(";
+    if (afterValue && _unclosedParens > 0) {
+      // Ada kurung yang menunggu ditutup, dan posisinya valid untuk ditutup.
+      equation += ')';
+    } else if (afterValue) {
+      // Kurung buka tepat setelah angka berarti perkalian implisit:
+      // "5(" dibaca sebagai "5×(".
+      equation += '×(';
     } else {
-      equation += "(";
+      equation += '(';
     }
   }
 
+  /// Mengubah tanda positif/negatif.
+  ///
+  /// Hanya berlaku untuk bilangan tunggal — membalik tanda pada ekspresi
+  /// gabungan seperti `"5+3"` bersifat ambigu, jadi sengaja diabaikan.
   void _handleSignToggle() {
-    if (equation == "0") return;
+    if (equation == '0') return;
 
     if (_calculated) {
-      if (_isErrorResult || result == "0") return;
+      if (_isErrorResult || result == '0') return;
       equation = result.startsWith('-') ? result.substring(1) : '-$result';
-      result = "0";
+      result = '0';
       _calculated = false;
       return;
     }
 
     final withoutMinus =
         equation.startsWith('-') ? equation.substring(1) : equation;
-    final isSimple = !withoutMinus.contains(_compoundChars);
 
-    if (isSimple) {
+    if (!withoutMinus.contains(_compoundChars)) {
       equation =
           equation.startsWith('-') ? equation.substring(1) : '-$equation';
     }
@@ -235,7 +285,7 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
   void _handleInput(String buttonText) {
     if (CalculatorLogic.isInfixOperator(buttonText)) {
       _handleOperator(buttonText);
-    } else if (buttonText == ".") {
+    } else if (buttonText == '.') {
       _handleDot();
     } else {
       _handleDigit(buttonText);
@@ -245,19 +295,22 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
   void _handleOperator(String op) {
     if (_calculated) {
       if (_isErrorResult) {
-        equation = "0";
-        result = "0";
-        _calculated = false;
+        // Melanjutkan perhitungan dari hasil error tidak masuk akal,
+        // jadi state di-reset.
+        _handleClear();
         return;
       }
+      // Merangkai perhitungan: hasil sebelumnya jadi operand pertama.
       equation = result;
       _calculated = false;
     }
 
+    // Hanya minus yang boleh muncul di posisi ini, sebagai tanda negatif.
     if (equation.endsWith('(') && op != '-') return;
-    if (equation == "0" && op != '-') return;
+    if (equation == '0' && op != '-') return;
 
     if (_endsWithOperator) {
+      // Operator baru menggantikan yang lama, bukan ditumpuk.
       equation = equation.substring(0, equation.length - 1) + op;
     } else {
       equation += op;
@@ -266,54 +319,57 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
 
   void _handleDot() {
     if (_calculated) {
-      equation = "0.";
-      result = "0";
+      equation = '0.';
+      result = '0';
       _calculated = false;
       return;
     }
 
+    // Titik desimal tidak valid setelah kurung tutup atau persen.
     if (equation.endsWith(')') || equation.endsWith('%')) return;
 
-    final lastNumber = _getLastNumber();
-    if (!lastNumber.contains('.')) {
-      if (_endsWithOperator || equation.endsWith('(')) {
-        equation += "0.";
-      } else if (equation == "0") {
-        equation = "0.";
-      } else {
-        equation += ".";
-      }
+    // Satu angka hanya boleh punya satu titik desimal.
+    if (_getLastNumber().contains('.')) return;
+
+    if (_endsWithOperator || equation.endsWith('(')) {
+      // Menyisipkan "0" agar tidak terbentuk ekspresi seperti "5+."
+      equation += '0.';
+    } else if (equation == '0') {
+      equation = '0.';
+    } else {
+      equation += '.';
     }
   }
 
   void _handleDigit(String digit) {
     if (_calculated) {
-      equation = (digit == "00") ? "0" : digit;
-      result = "0";
+      equation = (digit == '00') ? '0' : digit;
+      result = '0';
       _calculated = false;
       return;
     }
 
     if (equation.endsWith(')') || equation.endsWith('%')) return;
 
-    if (equation == "0") {
-      equation = (digit == "00") ? "0" : digit;
+    if (equation == '0') {
+      equation = (digit == '00') ? '0' : digit;
       return;
     }
 
     final lastNumber = _getLastNumber();
 
     if (lastNumber.isEmpty) {
-      equation += (digit == "00") ? "0" : digit;
-    } else if (lastNumber == "0") {
-      if (digit == "0" || digit == "00") return;
+      equation += (digit == '00') ? '0' : digit;
+    } else if (lastNumber == '0') {
+      // Mencegah angka nol berlebih di depan: "05" menjadi "5".
+      if (digit == '0' || digit == '00') return;
       equation = equation.substring(0, equation.length - 1) + digit;
     } else {
       equation += digit;
     }
   }
 
-  // ── Actions ──
+  // ── Aksi ──
 
   void _onSwipeDelete() {
     HapticFeedback.lightImpact();
@@ -324,10 +380,8 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
   }
 
   void _copyResult() {
-    final text = _calculated
-        ? result
-        : (_preview.isNotEmpty ? _preview : null);
-    if (text == null || text == "0") return;
+    final text = _calculated ? result : (_preview.isEmpty ? null : _preview);
+    if (text == null || text == '0') return;
 
     Clipboard.setData(ClipboardData(text: text));
     ScaffoldMessenger.of(context).showSnackBar(
@@ -352,228 +406,249 @@ class _SimpleCalculatorState extends State<SimpleCalculator> {
       return;
     }
 
-    showModalBottomSheet(
+    showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF1C1C1E),
+      backgroundColor: _sheetColor,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => HistorySheet(
+      builder: (sheetContext) => HistorySheet(
         history: _history,
         formatEquation: Formatting.formatEquationDisplay,
         formatNumber: Formatting.addThousandsSeparator,
         onTap: (record) {
           setState(() {
+            // Hasil lama dipakai sebagai titik awal perhitungan baru.
             equation = record.result;
-            result = "0";
-            _preview = "";
+            result = '0';
+            _preview = '';
             _calculated = false;
           });
-          Navigator.pop(context);
+          Navigator.pop(sheetContext);
         },
         onClear: () {
-          setState(() => _history.clear());
-          _saveHistory();
-          Navigator.pop(context);
+          setState(_history.clear);
+          _storage.clear();
+          Navigator.pop(sheetContext);
         },
       ),
     );
   }
 
-  // ── UI ──
+  // ── Tampilan ──
 
+  /// Angka yang tampil di baris hasil: hasil akhir bila sudah dihitung,
+  /// preview bila sedang mengetik, atau hasil terakhir sebagai cadangan.
   String get _displayResult {
     if (_calculated) return result;
     if (_preview.isNotEmpty) return _preview;
     return result;
   }
 
-  Widget _buildButtonRow(List<CalcButton> buttons, {int flex = 1}) {
+  Widget _buildButton(CalcButton config) => CalculatorButtonWidget(
+        config: config,
+        defaultColor: _numberColor,
+        defaultTextColor: _textColor,
+        onPressed: buttonPressed,
+      );
+
+  /// Satu baris tombol yang membagi ruang vertikal yang tersisa secara merata.
+  Widget _buildButtonRow(List<CalcButton> buttons) {
     return Expanded(
-      flex: flex,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: buttons
-            .map((b) => CalculatorButtonWidget(
-                  config: b,
-                  defaultColor: _numberColor,
-                  defaultTextColor: _textColor,
-                  onPressed: buttonPressed,
-                ))
-            .toList(),
+        children: buttons.map(_buildButton).toList(),
+      ),
+    );
+  }
+
+  Widget _buildDisplay(BuildContext context) {
+    final showPreview = !_calculated && _preview.isNotEmpty;
+
+    // Ukuran font mengikuti lebar layar agar proporsional di berbagai
+    // perangkat. Ekspresi mengecil setelah dihitung karena fokus berpindah
+    // ke hasil.
+    final screenWidth = MediaQuery.of(context).size.width;
+    final eqSize = screenWidth * (_calculated ? 0.06 : 0.095);
+    final resSize =
+        screenWidth * (_calculated ? 0.12 : (showPreview ? 0.07 : 0.065));
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragEnd: (details) {
+        // Geser ke kanan dengan kecepatan cukup berarti hapus satu karakter.
+        if ((details.primaryVelocity ?? 0) > 100) _onSwipeDelete();
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Semantics(
+                  label: 'Riwayat',
+                  button: true,
+                  child: GestureDetector(
+                    onTap: _showHistory,
+                    child: const Icon(
+                      Icons.history,
+                      color: _secondaryText,
+                      size: 22,
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                const Text(
+                  'swipe → hapus',
+                  style: TextStyle(fontSize: 10, color: _hintColor),
+                ),
+              ],
+            ),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.end,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  // Baris ekspresi. `reverse: true` menjaga ujung kanan
+                  // tetap terlihat saat ekspresi lebih lebar dari layar.
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    reverse: true,
+                    child: AnimatedDefaultTextStyle(
+                      duration: const Duration(milliseconds: 200),
+                      style: TextStyle(
+                        fontSize: eqSize.clamp(18.0, 48.0),
+                        fontWeight: FontWeight.w300,
+                        color: _calculated ? _secondaryText : _textColor,
+                        letterSpacing: 1.2,
+                      ),
+                      child: Text(
+                        Formatting.formatEquationDisplay(equation),
+                        key: const Key('equation'),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+
+                  // Baris hasil. Tekan lama untuk menyalin ke clipboard.
+                  GestureDetector(
+                    onLongPress: _copyResult,
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      reverse: true,
+                      child: AnimatedDefaultTextStyle(
+                        duration: const Duration(milliseconds: 200),
+                        style: TextStyle(
+                          fontSize: resSize.clamp(20.0, 56.0),
+                          fontWeight:
+                              _calculated ? FontWeight.w400 : FontWeight.w300,
+                          color: _calculated
+                              ? _textColor
+                              : (showPreview ? _previewText : _secondaryText),
+                          letterSpacing: 0.8,
+                        ),
+                        child: Text(
+                          Formatting.addThousandsSeparator(_displayResult),
+                          key: const Key('result'),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildKeypad() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(6, 4, 6, 10),
+      child: Column(
+        children: [
+          _buildButtonRow(const [
+            CalcButton('()', color: _functionColor, semanticLabel: 'Kurung'),
+            CalcButton('⌫', color: _functionColor, semanticLabel: 'Hapus'),
+            CalcButton('%', color: _functionColor, semanticLabel: 'Persen'),
+            CalcButton('AC', color: _accentColor, semanticLabel: 'Hapus semua'),
+          ]),
+          _buildButtonRow(const [
+            CalcButton('7'),
+            CalcButton('8'),
+            CalcButton('9'),
+            CalcButton('÷', color: _operatorColor, semanticLabel: 'Bagi'),
+          ]),
+          _buildButtonRow(const [
+            CalcButton('4'),
+            CalcButton('5'),
+            CalcButton('6'),
+            CalcButton('×', color: _operatorColor, semanticLabel: 'Kali'),
+          ]),
+          _buildButtonRow(const [
+            CalcButton('1'),
+            CalcButton('2'),
+            CalcButton('3'),
+            CalcButton('-', color: _operatorColor, semanticLabel: 'Kurang'),
+          ]),
+          _buildButtonRow(const [
+            CalcButton('±', semanticLabel: 'Plus minus'),
+            CalcButton('0'),
+            CalcButton('.', semanticLabel: 'Titik desimal'),
+            CalcButton('+', color: _operatorColor, semanticLabel: 'Tambah'),
+          ]),
+
+          // Tinggi tetap, bukan `Expanded`, agar tombol `=` tidak
+          // memanjang berlebihan di layar yang tinggi.
+          SizedBox(
+            height: _equalsRowHeight,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildButton(
+                  const CalcButton(
+                    '=',
+                    color: _equalsColor,
+                    semanticLabel: 'Sama dengan',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final showPreview = !_calculated && _preview.isNotEmpty;
-    final sw = MediaQuery.of(context).size.width;
-    final eqSize = sw * (_calculated ? 0.06 : 0.095);
-    final resSize = sw * (_calculated ? 0.12 : (showPreview ? 0.07 : 0.065));
-
     return Scaffold(
       backgroundColor: _bgColor,
       body: SafeArea(
         child: Column(
           children: [
-            // ── Display ──
-            Expanded(
-              flex: 2,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onHorizontalDragEnd: (d) {
-                  if ((d.primaryVelocity ?? 0) > 100) _onSwipeDelete();
-                },
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                  child: Column(
-                    children: [
-                      Row(
-                        children: [
-                          GestureDetector(
-                            onTap: _showHistory,
-                            child: const Icon(Icons.history,
-                                color: _secondaryText, size: 22),
-                          ),
-                          const Spacer(),
-                          const Text('swipe → hapus',
-                              style: TextStyle(
-                                  fontSize: 10,
-                                  color: Color(0x508E8E93))),
-                        ],
-                      ),
-                      Expanded(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              reverse: true,
-                              child: AnimatedDefaultTextStyle(
-                                duration: const Duration(milliseconds: 200),
-                                style: TextStyle(
-                                  fontSize: eqSize.clamp(18.0, 48.0),
-                                  fontWeight: FontWeight.w300,
-                                  color: _calculated
-                                      ? _secondaryText
-                                      : _textColor,
-                                  letterSpacing: 1.2,
-                                ),
-                                child: Text(
-                                  Formatting.formatEquationDisplay(equation),
-                                  key: const Key('equation'),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            GestureDetector(
-                              onLongPress: _copyResult,
-                              child: SingleChildScrollView(
-                                scrollDirection: Axis.horizontal,
-                                reverse: true,
-                                child: AnimatedDefaultTextStyle(
-                                  duration: const Duration(milliseconds: 200),
-                                  style: TextStyle(
-                                    fontSize: resSize.clamp(20.0, 56.0),
-                                    fontWeight: _calculated
-                                        ? FontWeight.w400
-                                        : FontWeight.w300,
-                                    color: _calculated
-                                        ? _textColor
-                                        : (showPreview
-                                            ? _previewText
-                                            : _secondaryText),
-                                    letterSpacing: 0.8,
-                                  ),
-                                  child: Text(
-                                    Formatting.addThousandsSeparator(
-                                        _displayResult),
-                                    key: const Key('result'),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+            // Area tampilan mendapat 2 bagian, keypad 3 bagian.
+            Expanded(flex: 2, child: _buildDisplay(context)),
+
+            // Garis pemisah dengan gradasi yang memudar di kedua ujungnya.
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Container(
+                height: 1,
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      Color(0x00FFFFFF),
+                      Color(0x33FFFFFF),
+                      Color(0x00FFFFFF),
                     ],
                   ),
                 ),
               ),
             ),
 
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Container(
-                height: 1,
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(colors: [
-                    Color(0x00FFFFFF),
-                    Color(0x33FFFFFF),
-                    Color(0x00FFFFFF),
-                  ]),
-                ),
-              ),
-            ),
-
-            // ── Buttons ──
-            Expanded(
-              flex: 3,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(6, 4, 6, 10),
-                child: Column(
-                  children: [
-                    _buildButtonRow([
-                      const CalcButton('()', color: _functionColor, semanticLabel: 'Kurung'),
-                      const CalcButton('⌫', color: _functionColor, semanticLabel: 'Hapus'),
-                      const CalcButton('%', color: _functionColor, semanticLabel: 'Persen'),
-                      const CalcButton('AC', color: _accentColor, semanticLabel: 'Hapus semua'),
-                    ]),
-                    _buildButtonRow([
-                      const CalcButton('7'),
-                      const CalcButton('8'),
-                      const CalcButton('9'),
-                      const CalcButton('÷', color: _operatorColor, semanticLabel: 'Bagi'),
-                    ]),
-                    _buildButtonRow([
-                      const CalcButton('4'),
-                      const CalcButton('5'),
-                      const CalcButton('6'),
-                      const CalcButton('×', color: _operatorColor, semanticLabel: 'Kali'),
-                    ]),
-                    _buildButtonRow([
-                      const CalcButton('1'),
-                      const CalcButton('2'),
-                      const CalcButton('3'),
-                      const CalcButton('-', color: _operatorColor, semanticLabel: 'Kurang'),
-                    ]),
-                    _buildButtonRow([
-                      const CalcButton('±', semanticLabel: 'Plus minus'),
-                      const CalcButton('0'),
-                      const CalcButton('.', semanticLabel: 'Titik desimal'),
-                      const CalcButton('+', color: _operatorColor, semanticLabel: 'Tambah'),
-                    ]),
-                    SizedBox(
-                      height: 52,
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          CalculatorButtonWidget(
-                            config: const CalcButton('=', color: _equalsColor, semanticLabel: 'Sama dengan'),
-                            defaultColor: _numberColor,
-                            defaultTextColor: _textColor,
-                            onPressed: buttonPressed,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            Expanded(flex: 3, child: _buildKeypad()),
           ],
         ),
       ),

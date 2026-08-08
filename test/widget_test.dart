@@ -1,18 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:calculator_bintang/main.dart';
+import 'package:calculator_bintang/utils/calculator_logic.dart';
+import 'package:calculator_bintang/utils/formatting.dart';
 
 final _eqFinder = find.byKey(const Key('equation'));
 final _resFinder = find.byKey(const Key('result'));
 
+/// Membaca teks baris ekspresi yang sedang tampil.
 String _eq(WidgetTester t) => (t.widget<Text>(_eqFinder)).data!;
+
+/// Membaca teks baris hasil yang sedang tampil.
 String _res(WidgetTester t) => (t.widget<Text>(_resFinder)).data!;
 
+/// Menekan satu tombol lalu menunggu animasi teks selesai.
 Future<void> _tap(WidgetTester t, String label) async {
   await t.tap(find.text(label));
   await t.pump(const Duration(milliseconds: 250));
 }
 
+/// Menekan sederet tombol secara berurutan.
 Future<void> _tapAll(WidgetTester t, List<String> labels) async {
   for (final l in labels) {
     await _tap(t, l);
@@ -20,6 +29,13 @@ Future<void> _tapAll(WidgetTester t, List<String> labels) async {
 }
 
 void main() {
+  // Widget test berjalan tanpa plugin platform asli, jadi penyimpanan
+  // lokal diganti dengan versi tiruan yang selalu dimulai kosong.
+  setUp(() {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    SharedPreferences.setMockInitialValues({});
+  });
+
   group('Initial state', () {
     testWidgets('shows 0 for equation and result', (t) async {
       await t.pumpWidget(const MyApp());
@@ -361,6 +377,146 @@ void main() {
       await t.tap(find.byIcon(Icons.history));
       await t.pumpAndSettle();
       expect(find.text('Riwayat'), findsOneWidget);
+    });
+
+    testWidgets('history entry can be reused', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '3', '=']);
+      await t.tap(find.byIcon(Icons.history));
+      await t.pumpAndSettle();
+
+      await t.tap(find.text('= 8'));
+      await t.pumpAndSettle();
+      expect(_eq(t), '8');
+    });
+
+    testWidgets('clearing history empties the sheet', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '3', '=']);
+      await t.tap(find.byIcon(Icons.history));
+      await t.pumpAndSettle();
+
+      await t.tap(find.text('Hapus Riwayat'));
+      await t.pumpAndSettle();
+
+      await t.tap(find.byIcon(Icons.history));
+      await t.pump();
+      expect(find.text('Belum ada riwayat'), findsOneWidget);
+    });
+
+    testWidgets('history survives app restart', (t) async {
+      await t.pumpWidget(const MyApp());
+      await _tapAll(t, ['5', '+', '3', '=']);
+      await t.pumpAndSettle();
+
+      // Ganti dulu dengan widget lain agar State lama benar-benar dilepas,
+      // sehingga `initState` berjalan lagi seperti saat aplikasi dibuka ulang.
+      await t.pumpWidget(const SizedBox());
+      await t.pumpAndSettle();
+
+      await t.pumpWidget(const MyApp());
+      await t.pumpAndSettle();
+
+      await t.tap(find.byIcon(Icons.history));
+      await t.pumpAndSettle();
+      expect(find.text('= 8'), findsOneWidget);
+    });
+  });
+
+  group('Accessibility', () {
+    testWidgets('symbol buttons expose readable labels', (t) async {
+      await t.pumpWidget(const MyApp());
+      final handle = t.ensureSemantics();
+
+      // Simbol seperti × dan ÷ tidak terbaca jelas oleh screen reader,
+      // jadi tiap tombol menyediakan label dalam Bahasa Indonesia.
+      for (final label in [
+        'Kali',
+        'Bagi',
+        'Tambah',
+        'Kurang',
+        'Sama dengan',
+        'Persen',
+        'Hapus',
+        'Hapus semua',
+        'Kurung',
+        'Plus minus',
+        'Titik desimal',
+      ]) {
+        expect(find.bySemanticsLabel(label), findsOneWidget,
+            reason: 'label "$label" tidak ditemukan');
+      }
+
+      handle.dispose();
+    });
+  });
+
+  group('CalculatorLogic', () {
+    test('recognises infix operators', () {
+      expect(CalculatorLogic.isInfixOperator('+'), isTrue);
+      expect(CalculatorLogic.isInfixOperator('×'), isTrue);
+      expect(CalculatorLogic.isInfixOperator('5'), isFalse);
+      expect(CalculatorLogic.isInfixOperator('('), isFalse);
+    });
+
+    test('formats integers without decimal part', () {
+      expect(CalculatorLogic.formatResult('8.0'), '8');
+      expect(CalculatorLogic.formatResult('-3.0'), '-3');
+    });
+
+    test('trims trailing zeros from decimals', () {
+      expect(CalculatorLogic.formatResult('2.500'), '2.5');
+    });
+
+    test('uses scientific notation for extreme values', () {
+      expect(CalculatorLogic.formatResult('1e13'), contains('e'));
+      expect(CalculatorLogic.formatResult('1e-10'), contains('e'));
+    });
+
+    test('returns null for unparseable input', () {
+      expect(CalculatorLogic.tryEvaluate('5+'), isNull);
+    });
+
+    test('reports division by zero as undefined', () {
+      expect(CalculatorLogic.tryEvaluate('5÷0'), 'Tidak terdefinisi');
+    });
+
+    test('converts percent to division by hundred', () {
+      expect(CalculatorLogic.tryEvaluate('50%'), '0.5');
+    });
+  });
+
+  group('Formatting', () {
+    test('spaces binary operators', () {
+      expect(Formatting.formatEquationDisplay('5+3×2'), '5 + 3 × 2');
+    });
+
+    test('keeps unary minus tight', () {
+      expect(Formatting.formatEquationDisplay('-5'), '-5');
+      expect(Formatting.formatEquationDisplay('5+-3'), '5 + -3');
+      expect(Formatting.formatEquationDisplay('(-5)'), '(-5)');
+    });
+
+    test('adds thousands separators', () {
+      expect(Formatting.addThousandsSeparator('998001'), '998,001');
+      expect(Formatting.addThousandsSeparator('1234567'), '1,234,567');
+    });
+
+    test('separates only the integer part', () {
+      expect(Formatting.addThousandsSeparator('1234.5678'), '1,234.5678');
+    });
+
+    test('handles negative numbers', () {
+      expect(Formatting.addThousandsSeparator('-9876'), '-9,876');
+    });
+
+    test('leaves errors and scientific notation untouched', () {
+      expect(Formatting.addThousandsSeparator('Error'), 'Error');
+      expect(
+        Formatting.addThousandsSeparator('Tidak terdefinisi'),
+        'Tidak terdefinisi',
+      );
+      expect(Formatting.addThousandsSeparator('1.00000e+13'), '1.00000e+13');
     });
   });
 }
